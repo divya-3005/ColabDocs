@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -13,6 +14,17 @@ export const DocumentEditor = () => {
         <p>Start typing your thoughts, notes, or collaborating with your team in real time...</p>
         `
     })
+    const [, setTick] = useState(0);
+
+    useEffect(() => {
+        if (!editor) return;
+        const handleUpdate = () => setTick((tick) => tick + 1);
+        editor.on('transaction', handleUpdate);
+        return () => {
+            editor.off('transaction', handleUpdate);
+        };
+    }, [editor]);
+
     if (!editor) {
         return null;
     }
@@ -21,17 +33,19 @@ export const DocumentEditor = () => {
             {/* //tool bar */}
             <div className="doc-toolbar">
                 {/*buttons*/}
-                <button onClick={() => editor.chain().focus().undo().run()}
-                    disabled={!editor.can().undo()}
+                <button
+                    onClick={() => editor.chain().focus().undo().run()}
                     title="Undo"
                 >
-                    <Undo size={18}></Undo>
+                    <Undo size={18} />
                 </button>
-                <button onClick={() => editor.chain().focus().redo().run()}
-                    disabled={!editor.can().redo()}
-                    title="Redo">
-                    <Redo size={18}></Redo>
+                <button
+                    onClick={() => editor.chain().focus().redo().run()}
+                    title="Redo"
+                >
+                    <Redo size={18} />
                 </button>
+
                 <div className="toolbar-divider"></div>
                 <button onClick={() => editor.chain().focus().toggleBold().run()}
                     className={editor.isActive('bold') ? 'is-active' : ""}
