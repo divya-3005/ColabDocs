@@ -1,21 +1,51 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
+
 
 import { Bold, Italic, Underline as UnderlineIcon, Heading1, Heading2, List, ListOrdered, Undo, Redo } from 'lucide-react';
 import './DocumentEditor.css'
 
 export const DocumentEditor = () => {
-    const editor = useEditor({
-        extensions: [StarterKit, Underline],
-        content: `
-        <h1>Untitled Document</h1>
-        <p>Start typing your thoughts, notes, or collaborating with your team in real time...</p>
-        `
-    })
-    const [, setTick] = useState(0);
+    // 1. Pick a single, stable name and color for this user
+    const currentUser = useMemo(() => ({
+        name: 'User ' + Math.floor(Math.random() * 100),
+        color: '#' + Math.floor(Math.random() * 16777215).toString(16),
+    }), []);
 
+    // 2. Persistent document and provider
+    const [ydoc] = useState(() => new Y.Doc());
+    const [provider] = useState(() => {
+        return new WebsocketProvider(
+            'ws://localhost:1234',
+            'colabdocs-demo-room',
+            ydoc
+        );
+    });
+
+    // 3. Connect to Tiptap
+    const editor = useEditor({
+        extensions: [
+            StarterKit.configure({ history: false }),
+            Underline,
+            Collaboration.configure({
+                document: ydoc,
+            }),
+            CollaborationCursor.configure({
+                provider: provider,
+                user: currentUser,
+            }),
+        ],
+    });
+
+
+    const [, setTick] = useState(0);
+    
     useEffect(() => {
         if (!editor) return;
         const handleUpdate = () => setTick((tick) => tick + 1);

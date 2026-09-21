@@ -9,14 +9,18 @@
     "lint": "eslint .",
     "preview": "vite preview"
   },
-  "dependencies": {
+    "dependencies": {
     "@monaco-editor/react": "^4.7.0",
-    "@tiptap/extension-underline": "^3.31.3",
-    "@tiptap/react": "^3.31.3",
-    "@tiptap/starter-kit": "^3.31.3",
+    "@tiptap/extension-collaboration": "^2.26.0",
+    "@tiptap/extension-collaboration-cursor": "^2.26.0",
+    "@tiptap/extension-underline": "^2.26.0",
+    "@tiptap/react": "^2.26.0",
+    "@tiptap/starter-kit": "^2.26.0",
     "lucide-react": "^1.47.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "y-websocket": "^1.5.4",
+    "yjs": "^13.6.23"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
