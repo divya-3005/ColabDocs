@@ -446,3 +446,89 @@
   border-top-color: inherit;
   border-right: 4px solid transparent;
 }
+
+/* --- File Dropdown Menu --- */
+.gdocs-menu-item-wrapper {
+  position: relative;
+}
+
+.gdocs-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+  min-width: 220px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdown-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 10px 4px 10px;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #1e293b;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-align: left;
+}
+
+.dropdown-item:hover {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.dropdown-item svg {
+  color: #64748b;
+}
+
+/* --- Print to PDF Styles --- */
+@media print {
+  .gdocs-header,
+  .gdocs-toolbar,
+  .gdocs-view-banner,
+  .collaboration-cursor__caret,
+  .collaboration-cursor__label {
+    display: none !important;
+  }
+  .doc-container {
+    background: none !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .gdocs-desk {
+    padding: 0 !important;
+    background: none !important;
+    overflow: visible !important;
+  }
+  .gdocs-paper {
+    box-shadow: none !important;
+    border: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+  }
+  .gdocs-paper::before {
+    display: none !important;
+  }
+}
+
