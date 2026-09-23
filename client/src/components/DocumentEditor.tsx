@@ -34,14 +34,23 @@ interface Collaborator {
 
 
 export const DocumentEditor = () => {
-    // 1. Pick a single, stable name and color for this user
-    const currentUser = useMemo(
-        () => ({
-            name: 'User ' + Math.floor(Math.random() * 100),
-            color: '#' + Math.floor(Math.random() * 16777215).toString(16),
-        }),
-        []
-    );
+    // 1. Persistent real user profile
+    const [currentUser] = useState(() => {
+        const stored = localStorage.getItem('colabdocs_user');
+        if (stored) {
+            try {
+                return JSON.parse(stored);
+            } catch {
+                // fallback
+            }
+        }
+        const initial = {
+            name: 'Divya Singh',
+            color: '#2563eb',
+        };
+        localStorage.setItem('colabdocs_user', JSON.stringify(initial));
+        return initial;
+    });
 
     // 2. Persistent document and provider
     const [ydoc] = useState(() => new Y.Doc());
@@ -49,6 +58,7 @@ export const DocumentEditor = () => {
     // 3. Get or generate a unique document room ID from the URL
     const roomId = useMemo(() => {
         let hash = window.location.hash.replace('#', '');
+        if (hash.includes('?')) hash = hash.split('?')[0];
         if (!hash) {
             hash = 'doc-' + Math.random().toString(36).substring(2, 9);
             window.location.hash = hash;
@@ -74,6 +84,36 @@ export const DocumentEditor = () => {
     >('connecting');
     const [copied, setCopied] = useState(false);
     const [docTitle, setDocTitle] = useState('Untitled document');
+
+    // Fetch document title from Neon DB on mount or register doc
+    useEffect(() => {
+        const syncDocWithDb = async () => {
+            try {
+                const res = await fetch('http://localhost:1234/api/documents', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: roomId, title: 'Untitled document' }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.title) setDocTitle(data.title);
+                }
+            } catch (err) {
+                console.error('Error syncing doc with DB:', err);
+            }
+        };
+        syncDocWithDb();
+    }, [roomId]);
+
+    const handleTitleChange = (newTitle: string) => {
+        setDocTitle(newTitle);
+        fetch(`http://localhost:1234/api/documents/${roomId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle }),
+        }).catch((err) => console.error('Error updating title:', err));
+    };
+
     // 6. Version History State
     const [versions, setVersions] = useState<DocVersion[]>([]);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -91,32 +131,41 @@ export const DocumentEditor = () => {
         };
     }, [provider]);
 
-    // Live Active Collaborators Tracking (Awareness)
+    // Live Active Collaborators Tracking (Awareness with Deduplication)
     const [activeUsers, setActiveUsers] = useState<Collaborator[]>([]);
 
     useEffect(() => {
         const updateAwareness = () => {
             const states = provider.awareness.getStates();
-            const users: Collaborator[] = [];
+            // Deduplicate by name so 1 person = exactly 1 avatar (cleans up any ghost refresh sessions)
+            const uniqueMap = new Map<string, Collaborator>();
 
             states.forEach((state, clientId) => {
-                if (state.user) {
-                    users.push({
+                if (state.user && state.user.name) {
+                    uniqueMap.set(state.user.name, {
                         clientId,
                         name: state.user.name,
-                        color: state.user.color,
+                        color: state.user.color || '#2563eb',
                     });
                 }
             });
 
-            setActiveUsers(users);
+            setActiveUsers(Array.from(uniqueMap.values()));
         };
 
         provider.awareness.on('change', updateAwareness);
         updateAwareness();
 
+        // Immediate cleanup on tab close or page navigation
+        const handleUnload = () => {
+            provider.awareness.setLocalState(null);
+        };
+        window.addEventListener('beforeunload', handleUnload);
+
         return () => {
+            window.removeEventListener('beforeunload', handleUnload);
             provider.awareness.off('change', updateAwareness);
+            provider.awareness.setLocalState(null);
         };
     }, [provider]);
 
@@ -241,7 +290,12 @@ export const DocumentEditor = () => {
             <header className="gdocs-header">
                 <div className="gdocs-header-left">
                     {/* Authentic Google Docs Blue Document SVG */}
-                    <div className="gdocs-logo" title="Docs home">
+                    <div
+                        className="gdocs-logo"
+                        title="Back to ColabDocs Home"
+                        onClick={() => { window.location.hash = ''; }}
+                        style={{ cursor: 'pointer' }}
+                    >
                         <svg viewBox="0 0 40 40" width="36" height="36">
                             <path
                                 d="M25.333 4H10.667C8.467 4 6.68 5.8 6.68 8L6.667 32c0 2.2 1.787 4 3.987 4H29.333c2.2 0 4-1.8 4-4V12L25.333 4z"
@@ -260,7 +314,7 @@ export const DocumentEditor = () => {
                             <input
                                 type="text"
                                 value={docTitle}
-                                onChange={(e) => setDocTitle(e.target.value)}
+                                onChange={(e) => handleTitleChange(e.target.value)}
                                 className="gdocs-title-input"
                                 title="Rename document"
                             />

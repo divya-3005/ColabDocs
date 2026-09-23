@@ -4,13 +4,15 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev" : "tsx watch server.ts"
+    "dev": "tsx watch server.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "dotenv": "^18.0.3",
     "ws": "^8.21.3",
     "y-websocket": "^1.5.4",
     "yjs": "^13.6.32"
