@@ -10,7 +10,7 @@ import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import {
     Bold, Italic, Underline as UnderlineIcon, Heading1, Heading2,
     List, ListOrdered, Undo, Redo, Lock, Check, Eye, Cloud, Star,
-    FileText, Code, History, X
+    FileText, Code, History, X, Link2, Globe
 } from 'lucide-react';
 
 
@@ -35,7 +35,7 @@ interface Collaborator {
 
 export const DocumentEditor = () => {
     // 1. Persistent real user profile
-    const [currentUser] = useState(() => {
+    const [currentUser, setCurrentUser] = useState(() => {
         const stored = localStorage.getItem('colabdocs_user');
         if (stored) {
             try {
@@ -55,8 +55,8 @@ export const DocumentEditor = () => {
     // 2. Persistent document and provider
     const [ydoc] = useState(() => new Y.Doc());
 
-    // 3. Get or generate a unique document room ID from the URL
-    const roomId = useMemo(() => {
+    // 3. Resolve Document Route & Security Key
+    const initialKey = useMemo(() => {
         let hash = window.location.hash.replace('#', '');
         if (hash.includes('?')) hash = hash.split('?')[0];
         if (!hash) {
@@ -66,48 +66,62 @@ export const DocumentEditor = () => {
         return hash;
     }, []);
 
-    // 4. Detect if the user is an 'editor' or 'viewer'
-    const userRole = useMemo(() => {
-        const hash = window.location.hash;
-        const queryString = hash.includes('?') ? hash.split('?')[1] : window.location.search;
-        const params = new URLSearchParams(queryString);
-        return params.get('role') === 'viewer' ? 'viewer' : 'editor';
-    }, []);
+    // 4. Role detection: If hash is #view-..., user is strictly a viewer!
+    const isCapabilityViewUrl = initialKey.startsWith('view-');
+    const [userRole, setUserRole] = useState<'editor' | 'viewer'>(isCapabilityViewUrl ? 'viewer' : 'editor');
+    const [actualDocId, setActualDocId] = useState<string>(isCapabilityViewUrl ? '' : initialKey);
+    const [viewToken, setViewToken] = useState<string>(isCapabilityViewUrl ? initialKey : '');
+    const [docTitle, setDocTitle] = useState('Untitled document');
 
-    const [provider] = useState(() => {
-        return new WebsocketProvider('ws://localhost:1234', roomId, ydoc);
-    });
+    // Connect to Yjs room (using actual doc id once resolved)
+    const provider = useMemo(() => {
+        const room = actualDocId || initialKey;
+        return new WebsocketProvider('ws://localhost:1234', room, ydoc);
+    }, [actualDocId, initialKey, ydoc]);
 
     // 5. Connection Status & Share State
     const [connectionStatus, setConnectionStatus] = useState<
         'connecting' | 'connected' | 'disconnected'
     >('connecting');
-    const [copied, setCopied] = useState(false);
-    const [docTitle, setDocTitle] = useState('Untitled document');
 
-    // Fetch document title from Neon DB on mount or register doc
+    // Fetch document title and resolve capability token from Neon DB
     useEffect(() => {
         const syncDocWithDb = async () => {
             try {
-                const res = await fetch('http://localhost:1234/api/documents', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: roomId, title: 'Untitled document' }),
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.title) setDocTitle(data.title);
+                if (isCapabilityViewUrl) {
+                    // Resolve capability viewer token from Neon DB
+                    const res = await fetch(`http://localhost:1234/api/documents/resolve/${initialKey}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        setActualDocId(data.docId);
+                        setDocTitle(data.title);
+                        setUserRole('viewer');
+                        setViewToken(data.viewToken);
+                    }
+                } else {
+                    // Master editor route: ensure document is in DB and obtain view_token
+                    const res = await fetch('http://localhost:1234/api/documents', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: initialKey, title: docTitle }),
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.title) setDocTitle(data.title);
+                        if (data.view_token) setViewToken(data.view_token);
+                    }
                 }
             } catch (err) {
                 console.error('Error syncing doc with DB:', err);
             }
         };
         syncDocWithDb();
-    }, [roomId]);
+    }, [initialKey, isCapabilityViewUrl]);
 
     const handleTitleChange = (newTitle: string) => {
+        if (userRole !== 'editor') return;
         setDocTitle(newTitle);
-        fetch(`http://localhost:1234/api/documents/${roomId}`, {
+        fetch(`http://localhost:1234/api/documents/${actualDocId || initialKey}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle }),
@@ -170,10 +184,21 @@ export const DocumentEditor = () => {
     }, [provider]);
 
 
-    const handleShare = () => {
-        navigator.clipboard.writeText(window.location.href);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+    // Share Modal & Capability Link State
+    const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+    const [sharePermission, setSharePermission] = useState<'editor' | 'viewer'>('editor');
+    const [shareCopied, setShareCopied] = useState(false);
+
+    const handleCopyShareLink = () => {
+        const baseUrl = window.location.origin + window.location.pathname;
+        // Distinct Capability Link: Viewer receives a completely separate #view-... cryptographic link!
+        const link = sharePermission === 'viewer'
+            ? `${baseUrl}#${viewToken || ('view-' + (actualDocId || initialKey).replace('doc-', ''))}`
+            : `${baseUrl}#${actualDocId || initialKey}`;
+
+        navigator.clipboard.writeText(link);
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2500);
     };
 
     // 7. File Menu & Export Logic
@@ -267,7 +292,13 @@ export const DocumentEditor = () => {
                 user: currentUser,
             }),
         ],
-    });
+    }, [userRole, provider]);
+
+    useEffect(() => {
+        if (editor) {
+            editor.setEditable(userRole === 'editor');
+        }
+    }, [editor, userRole]);
 
     const [, setTick] = useState(0);
 
@@ -403,7 +434,18 @@ export const DocumentEditor = () => {
                                 <div
                                     key={user.clientId}
                                     className="gdocs-avatar"
-                                    style={{ backgroundColor: user.color }}
+                                    style={{ backgroundColor: user.color, cursor: user.name === currentUser.name ? 'pointer' : 'default' }}
+                                    onClick={() => {
+                                        if (user.name === currentUser.name) {
+                                            const newName = window.prompt('Change your display name:', currentUser.name);
+                                            if (newName && newName.trim() && newName !== currentUser.name) {
+                                                const updated = { ...currentUser, name: newName.trim() };
+                                                setCurrentUser(updated);
+                                                localStorage.setItem('colabdocs_user', JSON.stringify(updated));
+                                                provider.awareness.setLocalStateField('user', updated);
+                                            }
+                                        }
+                                    }}
                                 >
                                     {user.name.charAt(0).toUpperCase()}
                                     <span className="avatar-tooltip">
@@ -414,7 +456,16 @@ export const DocumentEditor = () => {
                         ) : (
                             <div
                                 className="gdocs-avatar"
-                                style={{ backgroundColor: currentUser.color }}
+                                style={{ backgroundColor: currentUser.color, cursor: 'pointer' }}
+                                onClick={() => {
+                                    const newName = window.prompt('Change your display name:', currentUser.name);
+                                    if (newName && newName.trim() && newName !== currentUser.name) {
+                                        const updated = { ...currentUser, name: newName.trim() };
+                                        setCurrentUser(updated);
+                                        localStorage.setItem('colabdocs_user', JSON.stringify(updated));
+                                        provider.awareness.setLocalStateField('user', updated);
+                                    }
+                                }}
                             >
                                 {currentUser.name.charAt(0).toUpperCase()}
                                 <span className="avatar-tooltip">
@@ -428,11 +479,12 @@ export const DocumentEditor = () => {
 
                     {/* Authentic Google Share Button */}
                     <button
-                        onClick={handleShare}
-                        className={`gdocs-share-btn ${copied ? 'copied' : ''}`}
+                        onClick={() => setIsShareModalOpen(true)}
+                        className="gdocs-share-btn"
+                        title="Share document permissions"
                     >
-                        {copied ? <Check size={16} /> : <Lock size={15} />}
-                        <span>{copied ? 'Link copied' : 'Share'}</span>
+                        <Lock size={15} />
+                        <span>Share</span>
                     </button>
                 </div>
             </header>
@@ -583,6 +635,69 @@ export const DocumentEditor = () => {
                     </aside>
                 )}
             </div>
+
+            {/* 4. Authentic Google Docs Share Dialog */}
+            {isShareModalOpen && (
+                <div className="gdocs-modal-overlay" onClick={() => setIsShareModalOpen(false)}>
+                    <div className="gdocs-share-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="share-modal-header">
+                            <h3>Share "{docTitle}"</h3>
+                            <button
+                                onClick={() => setIsShareModalOpen(false)}
+                                className="share-modal-close-btn"
+                                title="Close"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="share-modal-body">
+                            <div className="share-section-title">General access</div>
+
+                            <div className="share-access-card">
+                                <div className="share-access-icon-wrapper">
+                                    <Globe size={20} />
+                                </div>
+                                <div className="share-access-text">
+                                    <span className="share-access-main">Anyone with the link</span>
+                                    <span className="share-access-desc">
+                                        {sharePermission === 'editor'
+                                            ? 'Anyone on the internet with this link can make live edits'
+                                            : 'Anyone on the internet with this link can only view'}
+                                    </span>
+                                </div>
+                                <div className="share-permission-picker">
+                                    <select
+                                        value={sharePermission}
+                                        onChange={(e) => setSharePermission(e.target.value as 'editor' | 'viewer')}
+                                        className="share-role-select"
+                                    >
+                                        <option value="editor">Editor</option>
+                                        <option value="viewer">Viewer</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="share-modal-footer">
+                            <button
+                                onClick={handleCopyShareLink}
+                                className={`share-copy-btn ${shareCopied ? 'copied' : ''}`}
+                            >
+                                {shareCopied ? <Check size={16} /> : <Link2 size={16} />}
+                                <span>{shareCopied ? 'Link copied' : 'Copy link'}</span>
+                            </button>
+
+                            <button
+                                onClick={() => setIsShareModalOpen(false)}
+                                className="share-done-btn"
+                            >
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

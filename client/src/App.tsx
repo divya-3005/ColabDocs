@@ -14,9 +14,9 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // If the hash starts with #doc-, open the collaborative document editor!
+  // If the hash starts with #doc- or #view-, open the collaborative document editor!
   // Otherwise, display the authentic Google Docs Home Dashboard!
-  const isEditingDoc = currentHash.startsWith('#doc-');
+  const isEditingDoc = currentHash.startsWith('#doc-') || currentHash.startsWith('#view-');
 
   return (
     <div>
