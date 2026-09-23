@@ -10,11 +10,28 @@ import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import {
     Bold, Italic, Underline as UnderlineIcon, Heading1, Heading2,
     List, ListOrdered, Undo, Redo, Lock, Check, Eye, Cloud, Star,
-    FileText, Code
+    FileText, Code, History, X
 } from 'lucide-react';
 
 
+
 import './DocumentEditor.css';
+
+interface DocVersion {
+    id: string;
+    timestamp: string;
+    author: string;
+    color: string;
+    content: string;
+}
+
+interface Collaborator {
+    clientId: number;
+    name: string;
+    color: string;
+}
+
+
 
 export const DocumentEditor = () => {
     // 1. Pick a single, stable name and color for this user
@@ -57,6 +74,10 @@ export const DocumentEditor = () => {
     >('connecting');
     const [copied, setCopied] = useState(false);
     const [docTitle, setDocTitle] = useState('Untitled document');
+    // 6. Version History State
+    const [versions, setVersions] = useState<DocVersion[]>([]);
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
 
     useEffect(() => {
         const statusHandler = (event: {
@@ -69,6 +90,36 @@ export const DocumentEditor = () => {
             provider.off('status', statusHandler);
         };
     }, [provider]);
+
+    // Live Active Collaborators Tracking (Awareness)
+    const [activeUsers, setActiveUsers] = useState<Collaborator[]>([]);
+
+    useEffect(() => {
+        const updateAwareness = () => {
+            const states = provider.awareness.getStates();
+            const users: Collaborator[] = [];
+
+            states.forEach((state, clientId) => {
+                if (state.user) {
+                    users.push({
+                        clientId,
+                        name: state.user.name,
+                        color: state.user.color,
+                    });
+                }
+            });
+
+            setActiveUsers(users);
+        };
+
+        provider.awareness.on('change', updateAwareness);
+        updateAwareness();
+
+        return () => {
+            provider.awareness.off('change', updateAwareness);
+        };
+    }, [provider]);
+
 
     const handleShare = () => {
         navigator.clipboard.writeText(window.location.href);
@@ -121,6 +172,36 @@ export const DocumentEditor = () => {
         a.click();
         URL.revokeObjectURL(url);
     };
+
+    // 8. Save & Restore Snapshot Logic
+    const saveVersion = () => {
+        if (!editor) return;
+        const content = editor.getHTML();
+
+        // Don't save empty document snapshots
+        if (!content || content === '<p></p>') return;
+
+        const newVersion: DocVersion = {
+            id: 'v-' + Date.now(),
+            timestamp: new Date().toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+            }),
+            author: currentUser.name,
+            color: currentUser.color,
+            content: content,
+        };
+
+        setVersions((prev) => [newVersion, ...prev]);
+    };
+
+    const restoreVersion = (version: DocVersion) => {
+        if (!editor) return;
+        // Overwrites the editor and syncs the rollback to all collaborators via Yjs
+        editor.commands.setContent(version.content);
+    };
+
 
 
     // 6. Connect to Tiptap
@@ -194,43 +275,53 @@ export const DocumentEditor = () => {
                                         : 'Connecting...'}
                                 </span>
                             </div>
+                            <button
+                                onClick={() => setIsHistoryOpen(true)}
+                                className="gdocs-icon-btn history-toggle-btn"
+                                title="Version history"
+                            >
+                                <History size={14} />
+                            </button>
                         </div>
 
                         {/* Authentic Google Docs Menu Bar */}
                         <nav className="gdocs-menu-bar">
-                            {/* Authentic Google Docs Menu Bar with File Dropdown */}
-                            <nav className="gdocs-menu-bar">
-                                <div className="gdocs-menu-item-wrapper">
-                                    <span
-                                        onClick={() => setIsFileMenuOpen(!isFileMenuOpen)}
-                                        className={isFileMenuOpen ? 'is-active' : ''}
-                                    >
-                                        File
-                                    </span>
+                            <div className="gdocs-menu-item-wrapper">
+                                <span
+                                    onClick={() => setIsFileMenuOpen(!isFileMenuOpen)}
+                                    className={isFileMenuOpen ? 'is-active' : ''}
+                                >
+                                    File
+                                </span>
 
-                                    {isFileMenuOpen && (
-                                        <div className="gdocs-dropdown">
-                                            <div className="dropdown-label">Download</div>
-                                            <button onClick={exportToPDF} className="dropdown-item">
-                                                <FileText size={15} />
-                                                <span>PDF Document (.pdf)</span>
-                                            </button>
-                                            <button onClick={exportToMarkdown} className="dropdown-item">
-                                                <Code size={15} />
-                                                <span>Markdown (.md)</span>
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
+                                {isFileMenuOpen && (
+                                    <div className="gdocs-dropdown">
+                                        <div className="dropdown-label">Download</div>
+                                        <button onClick={exportToPDF} className="dropdown-item">
+                                            <FileText size={15} />
+                                            <span>PDF Document (.pdf)</span>
+                                        </button>
+                                        <button onClick={exportToMarkdown} className="dropdown-item">
+                                            <Code size={15} />
+                                            <span>Markdown (.md)</span>
+                                        </button>
 
-                                <span>Edit</span>
-                                <span>View</span>
-                                <span>Insert</span>
-                                <span>Format</span>
-                                <span>Tools</span>
-                                <span>Extensions</span>
-                                <span>Help</span>
-                            </nav>
+                                        <div className="dropdown-divider" />
+
+                                        <div className="dropdown-label">History</div>
+                                        <button
+                                            onClick={() => {
+                                                setIsFileMenuOpen(false);
+                                                setIsHistoryOpen(true);
+                                            }}
+                                            className="dropdown-item"
+                                        >
+                                            <History size={15} />
+                                            <span>Version history</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
 
                             <span>Edit</span>
                             <span>View</span>
@@ -251,14 +342,35 @@ export const DocumentEditor = () => {
                         </div>
                     )}
 
-                    {/* User Avatar Circle */}
-                    <div
-                        className="gdocs-avatar"
-                        style={{ backgroundColor: currentUser.color }}
-                        title={currentUser.name}
-                    >
-                        {currentUser.name.charAt(0)}
+                    {/* Stacked Collaborator Avatars with Instant Tooltips */}
+                    <div className="gdocs-avatars-group">
+                        {activeUsers.length > 0 ? (
+                            activeUsers.map((user) => (
+                                <div
+                                    key={user.clientId}
+                                    className="gdocs-avatar"
+                                    style={{ backgroundColor: user.color }}
+                                >
+                                    {user.name.charAt(0).toUpperCase()}
+                                    <span className="avatar-tooltip">
+                                        {user.name === currentUser.name ? `${user.name} (You)` : user.name}
+                                    </span>
+                                </div>
+                            ))
+                        ) : (
+                            <div
+                                className="gdocs-avatar"
+                                style={{ backgroundColor: currentUser.color }}
+                            >
+                                {currentUser.name.charAt(0).toUpperCase()}
+                                <span className="avatar-tooltip">
+                                    {currentUser.name} (You)
+                                </span>
+                            </div>
+                        )}
                     </div>
+
+
 
                     {/* Authentic Google Share Button */}
                     <button
@@ -354,11 +466,68 @@ export const DocumentEditor = () => {
                 </div>
             )}
 
-            {/* 3. Physical Paper Canvas & Desk Area */}
-            <div className="gdocs-desk">
-                <div className="gdocs-paper">
-                    <EditorContent editor={editor} />
+            {/* 3. Physical Paper Canvas & Workspace with History Drawer */}
+            <div className="gdocs-workspace">
+                <div className="gdocs-desk">
+                    <div className="gdocs-paper">
+                        <EditorContent editor={editor} />
+                    </div>
                 </div>
+
+                {isHistoryOpen && (
+                    <aside className="gdocs-history-sidebar">
+                        <div className="history-header">
+                            <div className="history-title-group">
+                                <History size={16} />
+                                <h3>Version history</h3>
+                            </div>
+                            <button
+                                onClick={() => setIsHistoryOpen(false)}
+                                className="history-close-btn"
+                                title="Close version history"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="history-actions">
+                            <button onClick={saveVersion} className="history-snapshot-btn">
+                                + Save snapshot
+                            </button>
+                        </div>
+
+                        <div className="history-list">
+                            {versions.length === 0 ? (
+                                <div className="history-empty">
+                                    <p>No snapshots saved yet.</p>
+                                    <span>Click "+ Save snapshot" to record the current state of this document.</span>
+                                </div>
+                            ) : (
+                                versions.map((ver) => (
+                                    <div key={ver.id} className="history-card">
+                                        <div className="history-card-header">
+                                            <span className="history-time">{ver.timestamp}</span>
+                                            <button
+                                                onClick={() => restoreVersion(ver)}
+                                                className="history-restore-btn"
+                                                title="Restore this version"
+                                            >
+                                                Restore
+                                            </button>
+                                        </div>
+                                        <div className="history-card-user">
+                                            <span
+                                                className="history-user-badge"
+                                                style={{ backgroundColor: ver.color }}
+                                            />
+                                            <span className="history-user-name">{ver.author}</span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </aside>
+                )}
             </div>
         </div>
     );
