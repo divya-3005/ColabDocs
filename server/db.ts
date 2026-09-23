@@ -20,20 +20,45 @@ export async function initDb() {
   }
 
   try {
+    // 1. Create documents table
     await sql`
       CREATE TABLE IF NOT EXISTS documents (
         id VARCHAR(255) PRIMARY KEY,
         title VARCHAR(255) NOT NULL DEFAULT 'Untitled document',
         view_token VARCHAR(64) UNIQUE,
+        owner_id VARCHAR(255),
+        owner_name VARCHAR(255),
+        owner_email VARCHAR(255),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `;
-    // Ensure view_token exists for any previously created table
+    // Ensure capability view_token and ownership columns exist for any previously created table
     await sql`
       ALTER TABLE documents ADD COLUMN IF NOT EXISTS view_token VARCHAR(64) UNIQUE;
     `;
-    console.log('✅ Connected to Neon PostgreSQL: "documents" table verified with capability view_token.');
+    await sql`
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner_id VARCHAR(255);
+    `;
+    await sql`
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner_name VARCHAR(255);
+    `;
+    await sql`
+      ALTER TABLE documents ADD COLUMN IF NOT EXISTS owner_email VARCHAR(255);
+    `;
+
+    // 2. Create users table for Google OAuth & Demo accounts
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(255) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        avatar_url TEXT,
+        color VARCHAR(32) DEFAULT '#2563eb',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
+    console.log('✅ Connected to Neon PostgreSQL: "documents" & "users" tables verified.');
   } catch (err) {
     console.error('❌ Failed to connect to Neon PostgreSQL:', err);
   }

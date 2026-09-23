@@ -40,6 +40,83 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '', `http://${req.headers.host}`);
   const pathname = url.pathname;
 
+  // --- API: User Authentication (Google OAuth & Demo Profiles) ---
+  if (pathname === '/api/auth/login' && req.method === 'POST') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Database not configured' }));
+        return;
+      }
+
+      const body = await getJsonBody(req);
+      let userId = '';
+      let userName = '';
+      let userEmail = '';
+      let userAvatar = '';
+      let userColor = '#2563eb';
+
+      // 1. Check for Google OAuth Credential (JWT)
+      if (body.credential) {
+        try {
+          const parts = body.credential.split('.');
+          if (parts.length >= 2) {
+            const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+            const googlePayload = JSON.parse(payloadJson);
+            userId = googlePayload.sub || `google-${Date.now()}`;
+            userName = googlePayload.name || 'Google User';
+            userEmail = googlePayload.email || '';
+            userAvatar = googlePayload.picture || '';
+          }
+        } catch (jwtErr) {
+          console.error('Failed to parse Google JWT payload:', jwtErr);
+        }
+      }
+
+      // 2. Check for 1-Click Demo Profile
+      if (!userId && body.demoUser) {
+        userId = body.demoUser.id || `demo-${body.demoUser.name.toLowerCase().replace(/\s+/g, '-')}`;
+        userName = body.demoUser.name || 'Collaborator';
+        userEmail = body.demoUser.email || `${userId}@colabdocs.dev`;
+        userAvatar = body.demoUser.avatarUrl || '';
+        userColor = body.demoUser.color || '#2563eb';
+      }
+
+      if (!userId || !userName) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid authentication payload' }));
+        return;
+      }
+
+      // Palette of colors for avatar initials if no avatar URL
+      const colors = ['#2563eb', '#7c3aed', '#db2777', '#059669', '#d97706', '#dc2626'];
+      if (!userColor || userColor === '#2563eb') {
+        const hash = userName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+        userColor = colors[hash % colors.length];
+      }
+
+      // Upsert into Neon DB users table
+      const result = await sql`
+        INSERT INTO users (id, name, email, avatar_url, color)
+        VALUES (${userId}, ${userName}, ${userEmail}, ${userAvatar || null}, ${userColor})
+        ON CONFLICT (id) DO UPDATE
+        SET name = EXCLUDED.name,
+            email = EXCLUDED.email,
+            avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+            color = COALESCE(users.color, EXCLUDED.color)
+        RETURNING id, name, email, avatar_url, color, created_at
+      `;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ user: result[0], token: `session-${userId}` }));
+    } catch (err: any) {
+      console.error('Error during authentication:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // --- API: List all documents ---
   if (pathname === '/api/documents' && req.method === 'GET') {
     try {
@@ -48,11 +125,24 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Database not configured' }));
         return;
       }
-      const docs = await sql`
-        SELECT id, title, view_token, created_at, updated_at 
-        FROM documents 
-        ORDER BY updated_at DESC
-      `;
+
+      const userId = url.searchParams.get('userId');
+      let docs;
+      if (userId) {
+        docs = await sql`
+          SELECT id, title, view_token, owner_id, owner_name, owner_email, created_at, updated_at 
+          FROM documents 
+          WHERE owner_id = ${userId} OR owner_id IS NULL
+          ORDER BY updated_at DESC
+        `;
+      } else {
+        docs = await sql`
+          SELECT id, title, view_token, owner_id, owner_name, owner_email, created_at, updated_at 
+          FROM documents 
+          ORDER BY updated_at DESC
+        `;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(docs));
     } catch (err: any) {
@@ -73,7 +163,7 @@ const server = http.createServer(async (req, res) => {
       }
       const key = pathname.replace('/api/documents/resolve/', '');
       const results = await sql`
-        SELECT id, title, view_token, created_at, updated_at
+        SELECT id, title, view_token, owner_id, owner_name, owner_email, created_at, updated_at
         FROM documents
         WHERE id = ${key} OR view_token = ${key}
         LIMIT 1
@@ -100,6 +190,9 @@ const server = http.createServer(async (req, res) => {
           title: doc.title,
           viewToken: doc.view_token,
           role: isViewerToken ? 'viewer' : 'editor',
+          ownerId: doc.owner_id,
+          ownerName: doc.owner_name,
+          ownerEmail: doc.owner_email,
         })
       );
     } catch (err: any) {
@@ -118,7 +211,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'Database not configured' }));
         return;
       }
-      const { id, title } = await getJsonBody(req);
+      const { id, title, ownerId, ownerName, ownerEmail } = await getJsonBody(req);
       if (!id) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Document ID is required' }));
@@ -129,13 +222,16 @@ const server = http.createServer(async (req, res) => {
       const generatedViewToken = 'view-' + crypto.randomBytes(8).toString('hex');
 
       const result = await sql`
-        INSERT INTO documents (id, title, view_token, updated_at)
-        VALUES (${id}, ${docTitle}, ${generatedViewToken}, CURRENT_TIMESTAMP)
+        INSERT INTO documents (id, title, view_token, owner_id, owner_name, owner_email, updated_at)
+        VALUES (${id}, ${docTitle}, ${generatedViewToken}, ${ownerId || null}, ${ownerName || null}, ${ownerEmail || null}, CURRENT_TIMESTAMP)
         ON CONFLICT (id) DO UPDATE 
         SET title = EXCLUDED.title,
             view_token = COALESCE(documents.view_token, EXCLUDED.view_token),
+            owner_id = COALESCE(documents.owner_id, EXCLUDED.owner_id),
+            owner_name = COALESCE(documents.owner_name, EXCLUDED.owner_name),
+            owner_email = COALESCE(documents.owner_email, EXCLUDED.owner_email),
             updated_at = CURRENT_TIMESTAMP
-        RETURNING id, title, view_token, created_at, updated_at
+        RETURNING id, title, view_token, owner_id, owner_name, owner_email, created_at, updated_at
       `;
 
       res.writeHead(201, { 'Content-Type': 'application/json' });

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DocumentEditor } from './components/DocumentEditor';
 import { Dashboard } from './components/Dashboard';
+import { AuthProvider } from './context/AuthContext';
 
 function App() {
   const [currentHash, setCurrentHash] = useState(() => window.location.hash);
@@ -19,13 +20,15 @@ function App() {
   const isEditingDoc = currentHash.startsWith('#doc-') || currentHash.startsWith('#view-');
 
   return (
-    <div>
-      {isEditingDoc ? (
-        <DocumentEditor key={currentHash.split('?')[0]} />
-      ) : (
-        <Dashboard />
-      )}
-    </div>
+    <AuthProvider>
+      <div>
+        {isEditingDoc ? (
+          <DocumentEditor key={currentHash.split('?')[0]} />
+        ) : (
+          <Dashboard />
+        )}
+      </div>
+    </AuthProvider>
   );
 }
 

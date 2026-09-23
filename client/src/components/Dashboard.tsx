@@ -2,16 +2,23 @@ import { useState, useEffect } from 'react';
 import {
     Search, Plus, MoreVertical, FileText, Trash2, Edit2, ExternalLink, RefreshCw
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { AccountPopover } from './AccountPopover';
 import './Dashboard.css';
 
 interface DocItem {
     id: string;
     title: string;
+    view_token?: string;
+    owner_id?: string | null;
+    owner_name?: string | null;
+    owner_email?: string | null;
     created_at: string;
     updated_at: string;
 }
 
 export const Dashboard = () => {
+    const { currentUser } = useAuth();
     const [documents, setDocuments] = useState<DocItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(true);
@@ -48,7 +55,7 @@ export const Dashboard = () => {
         return () => window.removeEventListener('click', handleClickOutside);
     }, []);
 
-    // 1. Create a new document in Neon PostgreSQL and open it
+    // 1. Create a new document in Neon PostgreSQL with ownership and open it
     const handleCreateBlank = async () => {
         const newId = 'doc-' + Math.random().toString(36).substring(2, 9);
         try {
@@ -58,6 +65,9 @@ export const Dashboard = () => {
                 body: JSON.stringify({
                     id: newId,
                     title: 'Untitled document',
+                    ownerId: currentUser.id,
+                    ownerName: currentUser.name,
+                    ownerEmail: currentUser.email,
                 }),
             });
         } catch (err) {
@@ -166,9 +176,7 @@ export const Dashboard = () => {
                     <button onClick={loadDocuments} className="refresh-btn" title="Refresh documents">
                         <RefreshCw size={16} />
                     </button>
-                    <div className="dashboard-user-avatar" title="Your account">
-                        D
-                    </div>
+                    <AccountPopover />
                 </div>
             </header>
 
@@ -237,7 +245,7 @@ export const Dashboard = () => {
 
                                     <div className="doc-card-meta-row">
                                         <span className="doc-card-date">
-                                            {formatDate(doc.updated_at)}
+                                            {doc.owner_name ? (doc.owner_id === currentUser.id ? 'Owned by me' : doc.owner_name) : 'Public'} • {formatDate(doc.updated_at)}
                                         </span>
 
                                         <div className="doc-menu-wrapper" onClick={(e) => e.stopPropagation()}>

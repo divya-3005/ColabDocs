@@ -962,6 +962,16 @@
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
 }
 
+.share-owner-tag {
+  font-size: 12px;
+  font-weight: 500;
+  color: #5f6368;
+  padding: 4px 10px;
+  background: #f1f3f4;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
 .share-modal-footer {
   display: flex;
   align-items: center;

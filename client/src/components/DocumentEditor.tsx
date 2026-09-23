@@ -12,9 +12,8 @@ import {
     List, ListOrdered, Undo, Redo, Lock, Check, Eye, Cloud, Star,
     FileText, Code, History, X, Link2, Globe
 } from 'lucide-react';
-
-
-
+import { useAuth } from '../context/AuthContext';
+import { AccountPopover } from './AccountPopover';
 import './DocumentEditor.css';
 
 interface DocVersion {
@@ -31,26 +30,9 @@ interface Collaborator {
     color: string;
 }
 
-
-
 export const DocumentEditor = () => {
-    // 1. Persistent real user profile
-    const [currentUser, setCurrentUser] = useState(() => {
-        const stored = localStorage.getItem('colabdocs_user');
-        if (stored) {
-            try {
-                return JSON.parse(stored);
-            } catch {
-                // fallback
-            }
-        }
-        const initial = {
-            name: 'Divya Singh',
-            color: '#2563eb',
-        };
-        localStorage.setItem('colabdocs_user', JSON.stringify(initial));
-        return initial;
-    });
+    // 1. Authenticated global user profile
+    const { currentUser } = useAuth();
 
     // 2. Persistent document and provider
     const [ydoc] = useState(() => new Y.Doc());
@@ -72,6 +54,7 @@ export const DocumentEditor = () => {
     const [actualDocId, setActualDocId] = useState<string>(isCapabilityViewUrl ? '' : initialKey);
     const [viewToken, setViewToken] = useState<string>(isCapabilityViewUrl ? initialKey : '');
     const [docTitle, setDocTitle] = useState('Untitled document');
+    const [docOwner, setDocOwner] = useState<{ id?: string; name?: string; email?: string } | null>(null);
 
     // Connect to Yjs room (using actual doc id once resolved)
     const provider = useMemo(() => {
@@ -84,7 +67,7 @@ export const DocumentEditor = () => {
         'connecting' | 'connected' | 'disconnected'
     >('connecting');
 
-    // Fetch document title and resolve capability token from Neon DB
+    // Fetch document title, owner, and resolve capability token from Neon DB
     useEffect(() => {
         const syncDocWithDb = async () => {
             try {
@@ -97,18 +80,30 @@ export const DocumentEditor = () => {
                         setDocTitle(data.title);
                         setUserRole('viewer');
                         setViewToken(data.viewToken);
+                        if (data.ownerName) {
+                            setDocOwner({ id: data.ownerId, name: data.ownerName, email: data.ownerEmail });
+                        }
                     }
                 } else {
-                    // Master editor route: ensure document is in DB and obtain view_token
+                    // Master editor route: ensure document is in DB and obtain view_token & owner
                     const res = await fetch('http://localhost:1234/api/documents', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id: initialKey, title: docTitle }),
+                        body: JSON.stringify({
+                            id: initialKey,
+                            title: docTitle,
+                            ownerId: currentUser.id,
+                            ownerName: currentUser.name,
+                            ownerEmail: currentUser.email,
+                        }),
                     });
                     if (res.ok) {
                         const data = await res.json();
                         if (data.title) setDocTitle(data.title);
                         if (data.view_token) setViewToken(data.view_token);
+                        if (data.owner_name) {
+                            setDocOwner({ id: data.owner_id, name: data.owner_name, email: data.owner_email });
+                        }
                     }
                 }
             } catch (err) {
@@ -116,7 +111,7 @@ export const DocumentEditor = () => {
             }
         };
         syncDocWithDb();
-    }, [initialKey, isCapabilityViewUrl]);
+    }, [initialKey, isCapabilityViewUrl, currentUser.id, currentUser.name, currentUser.email]);
 
     const handleTitleChange = (newTitle: string) => {
         if (userRole !== 'editor') return;
@@ -183,6 +178,14 @@ export const DocumentEditor = () => {
         };
     }, [provider]);
 
+    // Keep local awareness in sync with the authenticated user profile
+    useEffect(() => {
+        provider.awareness.setLocalStateField('user', {
+            name: currentUser.name,
+            color: currentUser.color || '#2563eb',
+            email: currentUser.email,
+        });
+    }, [provider, currentUser]);
 
     // Share Modal & Capability Link State
     const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -427,53 +430,26 @@ export const DocumentEditor = () => {
                         </div>
                     )}
 
-                    {/* Stacked Collaborator Avatars with Instant Tooltips */}
+                    {/* Stacked Remote Collaborator Avatars */}
                     <div className="gdocs-avatars-group">
-                        {activeUsers.length > 0 ? (
-                            activeUsers.map((user) => (
+                        {activeUsers
+                            .filter((user) => user.name !== currentUser.name)
+                            .map((user) => (
                                 <div
                                     key={user.clientId}
                                     className="gdocs-avatar"
-                                    style={{ backgroundColor: user.color, cursor: user.name === currentUser.name ? 'pointer' : 'default' }}
-                                    onClick={() => {
-                                        if (user.name === currentUser.name) {
-                                            const newName = window.prompt('Change your display name:', currentUser.name);
-                                            if (newName && newName.trim() && newName !== currentUser.name) {
-                                                const updated = { ...currentUser, name: newName.trim() };
-                                                setCurrentUser(updated);
-                                                localStorage.setItem('colabdocs_user', JSON.stringify(updated));
-                                                provider.awareness.setLocalStateField('user', updated);
-                                            }
-                                        }
-                                    }}
+                                    style={{ backgroundColor: user.color }}
                                 >
                                     {user.name.charAt(0).toUpperCase()}
                                     <span className="avatar-tooltip">
-                                        {user.name === currentUser.name ? `${user.name} (You)` : user.name}
+                                        {user.name}
                                     </span>
                                 </div>
-                            ))
-                        ) : (
-                            <div
-                                className="gdocs-avatar"
-                                style={{ backgroundColor: currentUser.color, cursor: 'pointer' }}
-                                onClick={() => {
-                                    const newName = window.prompt('Change your display name:', currentUser.name);
-                                    if (newName && newName.trim() && newName !== currentUser.name) {
-                                        const updated = { ...currentUser, name: newName.trim() };
-                                        setCurrentUser(updated);
-                                        localStorage.setItem('colabdocs_user', JSON.stringify(updated));
-                                        provider.awareness.setLocalStateField('user', updated);
-                                    }
-                                }}
-                            >
-                                {currentUser.name.charAt(0).toUpperCase()}
-                                <span className="avatar-tooltip">
-                                    {currentUser.name} (You)
-                                </span>
-                            </div>
-                        )}
+                            ))}
                     </div>
+
+                    {/* Authentic Google Account Popover */}
+                    <AccountPopover />
 
 
 
@@ -652,6 +628,30 @@ export const DocumentEditor = () => {
                         </div>
 
                         <div className="share-modal-body">
+                            <div className="share-section-title">People with access</div>
+                            <div className="share-access-card" style={{ marginBottom: 12 }}>
+                                <div
+                                    className="share-access-icon-wrapper"
+                                    style={{
+                                        backgroundColor: docOwner?.id === currentUser.id ? (currentUser.color || '#2563eb') : '#e8f0fe',
+                                        color: docOwner?.id === currentUser.id ? '#ffffff' : '#1a73e8',
+                                        fontWeight: 600,
+                                        fontSize: 14,
+                                    }}
+                                >
+                                    {(docOwner?.name || currentUser.name).charAt(0).toUpperCase()}
+                                </div>
+                                <div className="share-access-text">
+                                    <span className="share-access-main">
+                                        {docOwner?.name || currentUser.name} {(!docOwner?.id || docOwner?.id === currentUser.id) ? '(you)' : ''}
+                                    </span>
+                                    <span className="share-access-desc">
+                                        {docOwner?.email || currentUser.email}
+                                    </span>
+                                </div>
+                                <span className="share-owner-tag">Owner</span>
+                            </div>
+
                             <div className="share-section-title">General access</div>
 
                             <div className="share-access-card">
